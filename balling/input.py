@@ -180,7 +180,7 @@ def get_input_data(input_dir, batch_size, repeat, buffer_size=1000):
     filenames, labels = filenames_and_labels_in_dir(input_dir)
 
     filenames = tf.constant(filenames, dtype=tf.string)
-    labels = tf.constant(labels, dtype=tf.int8)
+    labels = tf.constant(labels, dtype=tf.int32)
 
     dataset = tf.data.Dataset.from_tensor_slices((filenames, labels))
 
