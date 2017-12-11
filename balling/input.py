@@ -54,7 +54,7 @@ def split_audio_files(path, outpath, extension=None, segment_duration=12):
     if os.path.isfile(path):
         files = [path]
     else:
-        files = filenames_in_dir(path, extension)
+        files = filenames_and_labels_in_dir(path, extension)
 
     part_suffix = '%06d'
 
@@ -90,7 +90,7 @@ def split_audio_files(path, outpath, extension=None, segment_duration=12):
         run_with_logging(cmd)
 
 
-def filenames_in_dir(directory, extension=None):
+def filenames_and_labels_in_dir(directory, extension='wav', positive_label_pattern='-play-'):
     r"""
     Gets all files in a directory with an optional extension filter
     :param directory: input directory to get the files from
@@ -107,13 +107,19 @@ def filenames_in_dir(directory, extension=None):
                 all_files.append(os.path.join(dirpath, file_))
             elif extension is None:
                 all_files.append(os.path.join(dirpath, file_))
-    return all_files
+
+    all_labels = [int(positive_label_pattern in filename) for filename in all_files]
+
+    return all_files, all_labels
 
 
-def mfcc_fingerprint_from_wav(filename, window_size_secs,
+def mfcc_fingerprint_from_wav(filename,
+                              label,
+                              window_size_secs,
                               stride_secs,
                               sampling_rate_hz,
                               audio_length_secs,
+                              positive_label_path_pattern='-file-',
                               dct_coefficient_count=32):
     r"""
     Creates a mfcc fingerprint from a wav audio input.
@@ -121,7 +127,7 @@ def mfcc_fingerprint_from_wav(filename, window_size_secs,
     More info on mfcc: https://en.wikipedia.org/wiki/Mel-frequency_cepstrum
 
 
-    :param filename: filename of the wav file
+    :param filename_tensor: filename of the wav file
     :param window_size_secs: the window for the audio spectrum in seconds.
     :param stride_secs: the stride for the audio spectrum in seconds.
     :param sampling_rate_hz: the rate at which the input was sampled in Hz.
@@ -138,57 +144,28 @@ def mfcc_fingerprint_from_wav(filename, window_size_secs,
     window_size_samples = sampling_rate_hz * window_size_secs
     stride_samples = sampling_rate_hz * stride_secs
 
-    with tf.Session(graph=tf.Graph()) as sess:
-        wav_filename_placeholder = tf.placeholder(tf.string, [])
-        wav_loader = io_ops.read_file(wav_filename_placeholder)
-        wav_decoder = contrib_audio.decode_wav(wav_loader,
-                                               desired_channels=1,
-                                               desired_samples=desired_samples)
-        spectogram = contrib_audio.audio_spectrogram(
-            wav_decoder.audio,
-            window_size=window_size_samples,
-            stride=stride_samples,
-            magnitude_squared=True
-        )
+    wav_loader = io_ops.read_file(filename)
 
-        mfcc = contrib_audio.mfcc(
-            spectogram,
-            sampling_rate_hz,
-            dct_coefficient_count=dct_coefficient_count
-        )
+    wav_decoder = contrib_audio.decode_wav(wav_loader,
+                                           desired_channels=1,
+                                           desired_samples=desired_samples)
 
-        mfcc = tf.reshape(mfcc, (spectogram.shape[1], dct_coefficient_count, 1))
+    spectogram = contrib_audio.audio_spectrogram(
+        wav_decoder.audio,
+        window_size=window_size_samples,
+        stride=stride_samples,
+        magnitude_squared=True
+    )
 
-        return sess.run(
-            mfcc,
-            feed_dict={wav_filename_placeholder: filename}
-        )
+    mfcc = contrib_audio.mfcc(
+        spectogram,
+        sampling_rate_hz,
+        dct_coefficient_count=dct_coefficient_count
+    )
 
+    mfcc = tf.reshape(mfcc, (spectogram.shape[1], dct_coefficient_count, 1))
 
-def audio_tensors_generator(directory,
-                            window_size_secs=0.03,
-                            stride_secs=0.01,
-                            sampling_rate_hz=8000,
-                            audio_length_secs=12,
-                            positive_label_dir_name='-play-',
-                            ):
-    r"""
-    creates a generator from a directory with PCM coded tensors of all wav files
-    in the directory
-
-    :param directory the directory: from where to load the files
-    :param positive_label_dir_name: specifies a string that needs to be present in the path when it is a positive label
-    """
-    filenames = filenames_in_dir(directory, extension='wav')
-
-    for filename in filenames:
-        label = int(positive_label_dir_name in filename)
-        yield (mfcc_fingerprint_from_wav(filename,
-                                         window_size_secs,
-                                         stride_secs,
-                                         sampling_rate_hz,
-                                         audio_length_secs),
-               label)
+    return mfcc, label
 
 
 def get_input_data(input_dir, batch_size, repeat, buffer_size=1000):
@@ -199,10 +176,20 @@ def get_input_data(input_dir, batch_size, repeat, buffer_size=1000):
     :param buffer_size:
     :return:
     """
-    dataset = tf.data.Dataset.from_generator(lambda: audio_tensors_generator(input_dir),
-                                             output_types=(tf.float32, tf.int64),
-                                             output_shapes=(tf.TensorShape([None, None, 1]), tf.TensorShape([]))
-                                             )
+
+    filenames, labels = filenames_and_labels_in_dir(input_dir)
+
+    filenames = tf.constant(filenames, dtype=tf.string)
+    labels = tf.constant(labels, dtype=tf.int8)
+
+    dataset = tf.data.Dataset.from_tensor_slices((filenames, labels))
+
+    dataset = dataset.map(lambda filename, label: mfcc_fingerprint_from_wav(filename,
+                                                                            label,
+                                                                            audio_length_secs=12,
+                                                                            sampling_rate_hz=8000,
+                                                                            window_size_secs=0.3,
+                                                                            stride_secs=0.1))
 
     dataset = dataset.shuffle(buffer_size=buffer_size)
     dataset = dataset.batch(batch_size)
@@ -219,7 +206,7 @@ if __name__ == '__main__':
 
     with tf.Session() as sess:
         feature, label = get_input_data('data/splits',
-                                        3,
-                                        200)
+                                 5,
+                                 200)
         for i in range(100):
             print(sess.run([feature, label]))
