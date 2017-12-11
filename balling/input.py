@@ -110,7 +110,11 @@ def filenames_in_dir(directory, extension=None):
     return all_files
 
 
-def mfcc_fingerprint_from_wav(filename, window_size_secs, stride_secs, sampling_rate_hz, audio_length_secs):
+def mfcc_fingerprint_from_wav(filename, window_size_secs,
+                              stride_secs,
+                              sampling_rate_hz,
+                              audio_length_secs,
+                              dct_coefficient_count=32):
     r"""
     Creates a mfcc fingerprint from a wav audio input.
 
@@ -149,8 +153,11 @@ def mfcc_fingerprint_from_wav(filename, window_size_secs, stride_secs, sampling_
 
         mfcc = contrib_audio.mfcc(
             spectogram,
-            sampling_rate_hz
+            sampling_rate_hz,
+            dct_coefficient_count=dct_coefficient_count
         )
+
+        mfcc = tf.reshape(mfcc, (spectogram.shape[1], dct_coefficient_count, 1))
 
         return sess.run(
             mfcc,
@@ -194,7 +201,7 @@ def get_input_data(input_dir, batch_size, repeat, buffer_size=1000):
     """
     dataset = tf.data.Dataset.from_generator(lambda: audio_tensors_generator(input_dir),
                                              output_types=(tf.float32, tf.int64),
-                                             output_shapes=(tf.TensorShape([1, None, 13]), tf.TensorShape([]))
+                                             output_shapes=(tf.TensorShape([None, None, 1]), tf.TensorShape([]))
                                              )
 
     dataset = dataset.shuffle(buffer_size=buffer_size)
