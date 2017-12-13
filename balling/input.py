@@ -200,10 +200,10 @@ def get_input_data(input_dir,
 
         num_parallel_calls=multiprocessing.cpu_count())
 
+    dataset = dataset.cache()  # FIXME: Cache DS into memory. might not work with bigger DS.
     dataset = dataset.shuffle(buffer_size=shuffle_buffer_size)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(epochs)
-    dataset.cache()  # FIXME: loads the whole DS into memory. If `filename` is specified it will cache on filesystem
 
     iterator = dataset.make_one_shot_iterator()
     return iterator.get_next()
