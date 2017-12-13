@@ -63,7 +63,7 @@ def create_sliding_windows(decoded_wav,
                                  rates=[1, 1, 1, 1],
                                  padding='VALID'))
 
-    return tf.data.Dataset.from_tensors(windows)
+    return tf.data.Dataset.from_tensor_slices(windows)
 
     windows_datasets = [tf.data.Dataset.from_tensors((window, label)) for window in windows]
 
