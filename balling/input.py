@@ -43,6 +43,11 @@ def filenames_and_labels_in_dir(directory, extension='wav', positive_label_path_
 
 
 def parse_wav(filename):
+    r"""
+    Parses a wav file specified by the `filename`
+    :param filename: A `str`
+    :return:
+    """
     wav = io_ops.read_file(filename)
     decoded_wav = contrib_audio.decode_wav(wav,
                                            desired_channels=1)
@@ -50,7 +55,7 @@ def parse_wav(filename):
 
 
 def create_sliding_windows(decoded_wav,
-                           label,  # FIXME label should apply to all
+                           label,
                            audio_snippet_len_secs,
                            audio_snippet_stride_secs,
                            sampling_rate_hz):
@@ -58,16 +63,16 @@ def create_sliding_windows(decoded_wav,
 
     Creates a sliding windows over a audio tensor.
 
-    :param decoded_wav:
-    :param label:
-    :param audio_snippet_len_secs:
-    :param audio_snippet_stride_secs:
-    :param sampling_rate_hz:
+    :param decoded_wav: The decoded wav created by `tensorflow.contrib.framework.python.ops.audio_ops.decode_wav()`
+    :param label: A `tf.int32` tensor with shape (). The label of the audio file
+    :param audio_snippet_len_secs: An `float`. Defines how long the audio samples are.
+    :param audio_snippet_stride_secs: An `float`. Defines the stride of the window over the audio.
+    :param sampling_rate_hz: An `int`. Defines the sampling rate of the input audio in Hz (1/secs)
     :return:
     """
-    window_size_samples = audio_snippet_len_secs * sampling_rate_hz
-    window_stride_samples = audio_snippet_stride_secs * sampling_rate_hz
 
+    window_size_samples = math.floor(audio_snippet_len_secs * sampling_rate_hz)
+    window_stride_samples = math.floor(audio_snippet_stride_secs * sampling_rate_hz)
     windows = tf.squeeze(
         tf.extract_image_patches(decoded_wav.audio[None, ..., None],
                                  ksizes=[1, window_size_samples, 1, 1],
@@ -75,7 +80,10 @@ def create_sliding_windows(decoded_wav,
                                  rates=[1, 1, 1, 1],
                                  padding='VALID'))
 
-    return tf.data.Dataset.from_tensor_slices(windows)
+    dataset = tf.data.Dataset.from_tensor_slices(windows)
+    dataset = dataset.map(lambda window: (window, tf.identity(label)))
+
+    return dataset
 
 
 def mfcc_fingerprint_from_wav(decoded_wav,
@@ -83,14 +91,14 @@ def mfcc_fingerprint_from_wav(decoded_wav,
                               window_stride_secs,
                               sampling_rate_hz,
                               audio_snippet_len_secs,
-                              dct_coefficient_count=32):
+                              dct_coefficient_count):
     r"""
     Creates a mfcc fingerprint from a wav audio input.
 
     More info on mfcc: https://en.wikipedia.org/wiki/Mel-frequency_cepstrum
 
 
-    :param decoded_wav: the decoded wav file
+    :param decoded_wav: the decoded wav file from `tensorflow.contrib.framework.python.ops`
     :param window_size_secs: the window for the audio spectrum in seconds.
     :param window_stride_secs: the stride for the audio spectrum in seconds.
     :param sampling_rate_hz: the rate at which the input was sampled in Hz.
@@ -124,8 +132,8 @@ def mfcc_fingerprint_from_wav(decoded_wav,
     spectogram_length = math.floor((audio_snippet_len_samples - overlap_between_windows_samples)
                                    / window_stride_samples)
 
-    # reshape into a square where one dimension is time and the other is the dct_coefficient_count
-
+    # reshape into two dimensions where one dimension is time and the other is the dct_coefficient_count.
+    # Last dimension is channels - for now only 1.
     mfcc = tf.reshape(mfcc, (spectogram_length, dct_coefficient_count, 1))
 
     return mfcc
@@ -135,13 +143,13 @@ def get_input_data(input_dir,
                    batch_size,
                    epochs,
                    positive_label_path_pattern='-play-',
-                   audio_snippet_len_secs=6,
-                   audio_snippet_stride_secs=2,
+                   audio_snippet_len_secs=12,
+                   audio_snippet_stride_secs=1,
                    sampling_rate_hz=8000,
                    spectogram_window_size_secs=0.3,
                    spectogram_stride_secs=0.1,
                    dct_coefficient_count=32,
-                   shuffle_buffer_size=1000,
+                   shuffle_buffer_size=10000,
                    ):
     r"""
 
@@ -153,8 +161,8 @@ def get_input_data(input_dir,
     :param positive_label_path_pattern: A `str`.  Defines the pattern contained in the path to determine if an example
                                         is positive or negative. Note, that this is not used as a regex pattern
                                         matching, but merely whether this substring is contained in the path.
-    :param audio_snippet_len_secs: An `int`. Defines how long the audio samples are.
-    :param audio_snippet_stride_secs: An `int`. Defines the stride of the window over the audio.
+    :param audio_snippet_len_secs: An `float`. Defines how long the audio samples are.
+    :param audio_snippet_stride_secs: An `float`. Defines the stride of the window over the audio.
     :param sampling_rate_hz: An `int`. Defines the sampling rate of the input audio in Hz (1/secs)
     :param spectogram_window_size_secs: A `float`. Defines the the windows size for creating the spectogram
     :param spectogram_stride_secs: A `float`. Defines the stride of the window for creating the spectogram
@@ -174,7 +182,6 @@ def get_input_data(input_dir,
                                                     label_),
                           num_parallel_calls=multiprocessing.cpu_count())
 
-    # FIXME: pass label through this step.
     dataset = dataset.flat_map(
         lambda decoded_wav, label_: create_sliding_windows(decoded_wav,
                                                            label_,
@@ -183,18 +190,20 @@ def get_input_data(input_dir,
                                                            sampling_rate_hz=sampling_rate_hz))
 
     dataset = dataset.map(
-        lambda decoded_wav: (mfcc_fingerprint_from_wav(decoded_wav,
-                                                       audio_snippet_len_secs=audio_snippet_len_secs,
-                                                       sampling_rate_hz=sampling_rate_hz,
-                                                       window_size_secs=spectogram_window_size_secs,
-                                                       window_stride_secs=spectogram_stride_secs,
-                                                       dct_coefficient_count=dct_coefficient_count)),
+        lambda decoded_wav, label_: (mfcc_fingerprint_from_wav(decoded_wav,
+                                                               audio_snippet_len_secs=audio_snippet_len_secs,
+                                                               sampling_rate_hz=sampling_rate_hz,
+                                                               window_size_secs=spectogram_window_size_secs,
+                                                               window_stride_secs=spectogram_stride_secs,
+                                                               dct_coefficient_count=dct_coefficient_count),
+                                     label_),
+
         num_parallel_calls=multiprocessing.cpu_count())
 
     dataset = dataset.shuffle(buffer_size=shuffle_buffer_size)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(epochs)
-    dataset.cache()
+    dataset.cache()  # FIXME: loads the whole DS into memory. If `filename` is specified it will cache on filesystem
 
     iterator = dataset.make_one_shot_iterator()
     return iterator.get_next()
@@ -205,6 +214,7 @@ if __name__ == '__main__':
     with tf.Session() as sess:
         feature = get_input_data('data/8000hz',
                                  2,
-                                 2000)
+                                 1)
+
         for i in range(100):
             print(sess.run([feature]))
