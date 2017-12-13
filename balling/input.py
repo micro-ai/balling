@@ -1,6 +1,7 @@
 from __future__ import print_function
 
 import logging
+import math
 import multiprocessing
 import os
 import os.path
@@ -49,10 +50,21 @@ def parse_wav(filename):
 
 
 def create_sliding_windows(decoded_wav,
-                           label,
+                           label,  # FIXME label should apply to all
                            audio_snippet_len_secs,
                            audio_snippet_stride_secs,
                            sampling_rate_hz):
+    r"""
+
+    Creates a sliding windows over a audio tensor.
+
+    :param decoded_wav:
+    :param label:
+    :param audio_snippet_len_secs:
+    :param audio_snippet_stride_secs:
+    :param sampling_rate_hz:
+    :return:
+    """
     window_size_samples = audio_snippet_len_secs * sampling_rate_hz
     window_stride_samples = audio_snippet_stride_secs * sampling_rate_hz
 
@@ -65,22 +77,12 @@ def create_sliding_windows(decoded_wav,
 
     return tf.data.Dataset.from_tensor_slices(windows)
 
-    windows_datasets = [tf.data.Dataset.from_tensors((window, label)) for window in windows]
-
-    # Concatenate the datasets in the list
-    # TODO make this fail safe or change it entirely
-    data_set = windows_datasets[0]
-    for window in windows_datasets[1:]:
-        data_set.concatenate(window)
-
-    return data_set
-
 
 def mfcc_fingerprint_from_wav(decoded_wav,
                               window_size_secs,
-                              stride_secs,
+                              window_stride_secs,
                               sampling_rate_hz,
-                              audio_length_secs,
+                              audio_snippet_len_secs,
                               dct_coefficient_count=32):
     r"""
     Creates a mfcc fingerprint from a wav audio input.
@@ -90,9 +92,9 @@ def mfcc_fingerprint_from_wav(decoded_wav,
 
     :param decoded_wav: the decoded wav file
     :param window_size_secs: the window for the audio spectrum in seconds.
-    :param stride_secs: the stride for the audio spectrum in seconds.
+    :param window_stride_secs: the stride for the audio spectrum in seconds.
     :param sampling_rate_hz: the rate at which the input was sampled in Hz.
-    :param audio_length_secs: the length of the wav inputs in seconds.
+    :param audio_snippet_len_secs: the length of the wav inputs in seconds.
     :param dct_coefficient_count: how many channels to produce per time slice.
 
 
@@ -101,14 +103,13 @@ def mfcc_fingerprint_from_wav(decoded_wav,
     """
 
     window_size_samples = sampling_rate_hz * window_size_secs
-    stride_samples = sampling_rate_hz * stride_secs
+    window_stride_samples = sampling_rate_hz * window_stride_secs
 
     decoded_wav = tf.reshape(decoded_wav, [-1, 1])
-
     spectogram = contrib_audio.audio_spectrogram(
         decoded_wav,
         window_size=window_size_samples,
-        stride=stride_samples,
+        stride=window_stride_samples,
         magnitude_squared=True
     )
 
@@ -118,7 +119,14 @@ def mfcc_fingerprint_from_wav(decoded_wav,
         dct_coefficient_count=dct_coefficient_count
     )
 
-    mfcc = tf.reshape(mfcc, (spectogram.shape[1], dct_coefficient_count, 1))
+    audio_snippet_len_samples = sampling_rate_hz * audio_snippet_len_secs
+    overlap_between_windows_samples = window_size_samples - window_stride_samples
+    spectogram_length = math.floor((audio_snippet_len_samples - overlap_between_windows_samples)
+                                   / window_stride_samples)
+
+    # reshape into a square where one dimension is time and the other is the dct_coefficient_count
+
+    mfcc = tf.reshape(mfcc, (spectogram_length, dct_coefficient_count, 1))
 
     return mfcc
 
@@ -127,7 +135,8 @@ def get_input_data(input_dir,
                    batch_size,
                    epochs,
                    positive_label_path_pattern='-play-',
-                   audio_length_secs=12,
+                   audio_snippet_len_secs=6,
+                   audio_snippet_stride_secs=2,
                    sampling_rate_hz=8000,
                    spectogram_window_size_secs=0.3,
                    spectogram_stride_secs=0.1,
@@ -144,7 +153,8 @@ def get_input_data(input_dir,
     :param positive_label_path_pattern: A `str`.  Defines the pattern contained in the path to determine if an example
                                         is positive or negative. Note, that this is not used as a regex pattern
                                         matching, but merely whether this substring is contained in the path.
-    :param audio_length_secs: An `int`. Defines how long the audio samples are.
+    :param audio_snippet_len_secs: An `int`. Defines how long the audio samples are.
+    :param audio_snippet_stride_secs: An `int`. Defines the stride of the window over the audio.
     :param sampling_rate_hz: An `int`. Defines the sampling rate of the input audio in Hz (1/secs)
     :param spectogram_window_size_secs: A `float`. Defines the the windows size for creating the spectogram
     :param spectogram_stride_secs: A `float`. Defines the stride of the window for creating the spectogram
@@ -164,27 +174,27 @@ def get_input_data(input_dir,
                                                     label_),
                           num_parallel_calls=multiprocessing.cpu_count())
 
+    # FIXME: pass label through this step.
     dataset = dataset.flat_map(
-        lambda decoded_wav, label_: (create_sliding_windows(decoded_wav,
-                                                            label_,
-                                                            audio_snippet_len_secs=12,
-                                                            audio_snippet_stride_secs=2,
-                                                            sampling_rate_hz=sampling_rate_hz))
-    )
+        lambda decoded_wav, label_: create_sliding_windows(decoded_wav,
+                                                           label_,
+                                                           audio_snippet_len_secs=audio_snippet_len_secs,
+                                                           audio_snippet_stride_secs=audio_snippet_stride_secs,
+                                                           sampling_rate_hz=sampling_rate_hz))
 
     dataset = dataset.map(
-        lambda decoded_wav, label_: (mfcc_fingerprint_from_wav(decoded_wav,
-                                                               audio_length_secs=audio_length_secs,
-                                                               sampling_rate_hz=sampling_rate_hz,
-                                                               window_size_secs=spectogram_window_size_secs,
-                                                               stride_secs=spectogram_stride_secs,
-                                                               dct_coefficient_count=dct_coefficient_count),
-                                     label_),
+        lambda decoded_wav: (mfcc_fingerprint_from_wav(decoded_wav,
+                                                       audio_snippet_len_secs=audio_snippet_len_secs,
+                                                       sampling_rate_hz=sampling_rate_hz,
+                                                       window_size_secs=spectogram_window_size_secs,
+                                                       window_stride_secs=spectogram_stride_secs,
+                                                       dct_coefficient_count=dct_coefficient_count)),
         num_parallel_calls=multiprocessing.cpu_count())
 
     dataset = dataset.shuffle(buffer_size=shuffle_buffer_size)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(epochs)
+    dataset.cache()
 
     iterator = dataset.make_one_shot_iterator()
     return iterator.get_next()
@@ -193,10 +203,8 @@ def get_input_data(input_dir,
 if __name__ == '__main__':
 
     with tf.Session() as sess:
-        feature, label = get_input_data('data/8000hz',
-                                        5,
-                                        200)
-        print(feature.shape)
-
+        feature = get_input_data('data/8000hz',
+                                 2,
+                                 2000)
         for i in range(100):
-            print(sess.run([feature, label]))
+            print(sess.run([feature]))
