@@ -131,6 +131,7 @@ def mfcc_fingerprint_from_wav(decoded_wav,
     overlap_between_windows_samples = window_size_samples - window_stride_samples
     spectogram_length = math.floor((audio_snippet_len_samples - overlap_between_windows_samples)
                                    / window_stride_samples)
+    spectogram_length = int(spectogram_length)
 
     # reshape into two dimensions where one dimension is time and the other is the dct_coefficient_count.
     # Last dimension is channels - for now only 1.
