@@ -46,5 +46,5 @@ classifier = tf.estimator.Estimator(model_fn=cnn_model,
 
 if __name__ == '__main__':
     classifier.train(
-        input_fn=lambda: input.get_input_data('data/splits', batch_size=4, repeat=5)
+        input_fn=lambda: input.get_input_data('data/8000hz', batch_size=20, epochs=5)
     )
