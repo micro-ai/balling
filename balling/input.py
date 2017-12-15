@@ -5,6 +5,8 @@ import math
 import multiprocessing
 import os
 import os.path
+import uuid
+import tempfile
 
 import tensorflow as tf
 from tensorflow.contrib.framework.python.ops import audio_ops as contrib_audio
@@ -201,7 +203,8 @@ def get_input_data(input_dir,
 
         num_parallel_calls=multiprocessing.cpu_count())
 
-    dataset = dataset.cache()  # FIXME: Cache DS into memory. might not work with bigger DS.
+    temp_dir = os.path.join(tempfile.gettempdir(), str(uuid.uuid4()))
+    dataset = dataset.cache(tf.constant(temp_dir))
     dataset = dataset.shuffle(buffer_size=shuffle_buffer_size)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(epochs)
