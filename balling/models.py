@@ -1,6 +1,7 @@
 import tensorflow as tf
 
-def cnn_model(features, labels, params=None, config=None):
+
+def cnn_model(features, labels, mode=None, params=None):
     net = tf.layers.conv2d(features,
                            kernel_size=(3, 3),
                            filters=64,
@@ -28,12 +29,27 @@ def cnn_model(features, labels, params=None, config=None):
     global_step = tf.train.get_or_create_global_step()
     train_op = tf.train.AdamOptimizer(1e-4).minimize(loss, global_step=global_step)
 
-    eval_metric_ops = {
-        "accuracy": tf.metrics.accuracy(labels=labels, predictions=predictions),
+    export_outputs = {
+        "predictions": tf.estimator.export.PredictOutput({
+            "classes": predictions
+        })
     }
 
-    return tf.estimator.EstimatorSpec(tf.estimator.ModeKeys.TRAIN,
-                                      loss=loss,
-                                      train_op=train_op,
-                                      eval_metric_ops=eval_metric_ops)
+    if mode == tf.estimator.ModeKeys.PREDICT:
+        return tf.estimator.EstimatorSpec(
+            mode=mode,
+            predictions={"labels": predictions},
+            export_outputs=export_outputs
+        )
 
+    else:
+
+        eval_metric_ops = {
+            "accuracy": tf.metrics.accuracy(labels=labels, predictions=predictions),
+        }
+
+        return tf.estimator.EstimatorSpec(mode=mode,
+                                          loss=loss,
+                                          train_op=train_op,
+                                          eval_metric_ops=eval_metric_ops,
+                                          export_outputs=export_outputs)
