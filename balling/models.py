@@ -1,8 +1,5 @@
 import tensorflow as tf
 
-from balling import input
-
-
 def cnn_model(features, labels, params=None, config=None):
     net = tf.layers.conv2d(features,
                            kernel_size=(3, 3),
@@ -40,11 +37,3 @@ def cnn_model(features, labels, params=None, config=None):
                                       train_op=train_op,
                                       eval_metric_ops=eval_metric_ops)
 
-
-classifier = tf.estimator.Estimator(model_fn=cnn_model,
-                                    model_dir='/tmp/pingis_train')
-
-if __name__ == '__main__':
-    classifier.train(
-        input_fn=lambda: input.get_input_data('data/8000hz', batch_size=20, epochs=5)
-    )
