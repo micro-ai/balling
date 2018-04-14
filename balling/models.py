@@ -3,7 +3,7 @@ import tensorflow as tf
 from balling import input
 
 
-def cnn_model(features, labels, params, config=None):
+def cnn_model(features, labels, mode, params):
     net = tf.layers.conv2d(features,
                            kernel_size=(3, 3),
                            filters=64,
@@ -35,11 +35,20 @@ def cnn_model(features, labels, params, config=None):
     eval_metric_ops = {
         "accuracy": tf.metrics.accuracy(labels=labels, predictions=predictions),
     }
+    if mode == tf.estimator.ModeKeys.EVAL:
+        return tf.estimator.EstimatorSpec(mode,
+                                          loss=loss,
+                                          eval_metric_ops=eval_metric_ops)
+    elif mode == tf.estimator.ModeKeys.PREDICT:
+        return tf.estimator.EstimatorSpec(mode,
+                                          predictions={"predictions": predictions,
+                                                       "class_probabilities": tf.nn.softmax(logits)})
 
-    return tf.estimator.EstimatorSpec(tf.estimator.ModeKeys.TRAIN,
-                                      loss=loss,
-                                      train_op=train_op,
-                                      eval_metric_ops=eval_metric_ops)
+    elif mode == tf.estimator.ModeKeys.TRAIN:
+        return tf.estimator.EstimatorSpec(mode,
+                                          loss=loss,
+                                          train_op=train_op,
+                                          eval_metric_ops=eval_metric_ops)
 
 
 classifier = tf.estimator.Estimator(model_fn=cnn_model,
